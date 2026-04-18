@@ -4,18 +4,80 @@
 import asyncio
 import re
 from pathlib import Path
+from tqdm import tqdm
 from telethon import TelegramClient
-from telethon.tl.types import MessageMediaDocument
+from telethon.tl.types import MessageMediaDocument, DocumentAttributeFilename
 
 # ============================
 # CONFIG
 # ============================
-API_ID = 123445
-API_HASH = "1234"
-CHANNEL = -1003805416168  # channel ID or @username
+API_ID = 1234
+API_HASH = "hashhash"
+CHANNEL = -100123456789  # channel ID or @username
 DOWNLOAD_ROOT = Path("downloads")
 MAX_WORKERS = 3  # parallel downloads
 # ============================
+
+
+# -----------------------------
+# FILENAME EXTRACTION
+# -----------------------------
+
+def get_filename(msg):
+    media = msg.document or msg.video or msg.audio
+
+    if hasattr(media, "attributes"):
+        for attr in media.attributes:
+            if isinstance(attr, DocumentAttributeFilename):
+                return attr.file_name
+
+    return f"{msg.id}.bin"
+
+
+# -----------------------------
+# CAPTION → FOLDER NAME PARSING
+# -----------------------------
+
+def extract_folder_name(msg):
+    # Bot uploads: caption is in msg.text
+    raw = msg.text or msg.message or ""
+
+    if not raw:
+        return "_Root"
+
+    # Split into non-empty lines
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+
+    if not lines:
+        return "_Root"
+
+    # 1) Prefer a line with a hashtag (e.g. #Folder_1)
+    for line in lines:
+        if "#" in line:
+            folder_line = line
+            break
+    else:
+        # 2) Prefer a line that does NOT look like a filename (no dot + extension)
+        non_file_lines = [
+            line for line in lines
+            if "." not in line or " " in line  # crude but effective
+        ]
+        if non_file_lines:
+            folder_line = non_file_lines[-1]
+        else:
+            # 3) Fallback: last line (filename usually first, caption second)
+            folder_line = lines[-1]
+
+    # Remove leading '#' and sanitize
+    folder_line = folder_line.lstrip("#").strip()
+    safe_caption = "".join(
+        c for c in folder_line if c.isalnum() or c in " _-"
+    ).strip()
+
+    if not safe_caption:
+        safe_caption = "NoCaption"
+
+    return safe_caption
 
 
 # -----------------------------
@@ -55,39 +117,67 @@ def merge_parts(folder: Path):
 
 
 # -----------------------------
-# DOWNLOAD WORKER
+# DOWNLOAD WITH PROGRESS BAR
+# -----------------------------
+
+async def download_with_progress(client, msg, output_path):
+    media = msg.document or msg.video or msg.audio
+    size = media.size or 0
+
+    with tqdm(
+        total=size,
+        unit="B",
+        unit_scale=True,
+        desc=f"{output_path.name}",
+        ascii=True,
+    ) as bar:
+
+        async def progress_callback(current, total):
+            bar.update(current - bar.n)
+
+        await client.download_media(
+            msg,
+            file=output_path,
+            progress_callback=progress_callback
+        )
+
+
+# -----------------------------
+# WORKER
 # -----------------------------
 
 async def download_worker(queue, client):
     while True:
         item = await queue.get()
         if item is None:
+            queue.task_done()
             break
 
         msg, folder = item
 
-        media = msg.document or msg.video or msg.audio
-        filename = media.file.name or f"{msg.id}.bin"
-        output_path = folder / filename
-
-        if output_path.exists():
-            print(f"⏭️ Skipping existing file: {output_path}")
-            queue.task_done()
-            continue
-
-        print(f"⬇️ Downloading: {filename} → {folder}")
-
         try:
-            await client.download_media(msg, file=output_path)
-        except Exception as e:
-            print(f"❌ Error downloading {filename}: {e}")
+            filename = get_filename(msg)
+            safe_filename = "".join(c for c in filename if c not in "\\/:*?\"<>|")
+            output_path = folder / safe_filename
 
-        merge_parts(folder)
-        queue.task_done()
+            if output_path.exists():
+                print(f"⏭️ Skipping existing file: {output_path}")
+                queue.task_done()
+                continue
+
+            await download_with_progress(client, msg, output_path)
+
+            merge_parts(folder)
+
+        except Exception as e:
+            print(f"❌ Worker error: {e}")
+
+        finally:
+            queue.task_done()
 
 
 # -----------------------------
-# MAIN DOWNLOAD LOGIC
+# MAIN
 # -----------------------------
 
 async def main():
@@ -100,24 +190,29 @@ async def main():
 
     queue = asyncio.Queue()
 
-    # Start workers
     workers = [
         asyncio.create_task(download_worker(queue, client))
         for _ in range(MAX_WORKERS)
     ]
 
+    count = 0
+
     async for msg in client.iter_messages(CHANNEL, reverse=True):
         if not isinstance(msg.media, MessageMediaDocument):
             continue
 
-        caption = msg.message or "NoCaption"
-        safe_caption = "".join(c for c in caption if c.isalnum() or c in " _-").strip()
-        folder = DOWNLOAD_ROOT / safe_caption
+        folder_name = extract_folder_name(msg)
+        folder = DOWNLOAD_ROOT / folder_name
         folder.mkdir(parents=True, exist_ok=True)
 
         await queue.put((msg, folder))
+        count += 1
 
-    # Stop workers
+        if count % 50 == 0:
+            print(f"📦 Queued {count} files...")
+
+    print(f"📦 Total files queued: {count}")
+
     for _ in workers:
         await queue.put(None)
 
