@@ -71,11 +71,11 @@ def extract_folder_name(msg):
     # Remove leading '#' and sanitize
     folder_line = folder_line.lstrip("#").strip()
     safe_caption = "".join(
-        c for c in folder_line if c.isalnum() or c in " _-"
-    ).strip()
+        c for c in folder_line
+    ).strip().replace("_", " ")
 
     if not safe_caption:
-        safe_caption = "NoCaption"
+        safe_caption = "_Root"
 
     return safe_caption
 
