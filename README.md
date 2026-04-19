@@ -1,5 +1,5 @@
 # telegram-uploader
-Use Telegram messages as backup medium. Message limit is 2GB.
+Use Telegram messages as backup medium. Each message (file) limit is 2GB. No limit of total of messages (be mindful about [ToS](https://telegram.org/tos))
 
 requires: a local Telegram Bot ([docker](https://hub.docker.com/r/aiogram/telegram-bot-api))
 
