@@ -1,7 +1,7 @@
 # telegram-uploader
 Use Telegram messages as backup medium. Message limit is 2GB.
 
-requires: a local Bot ([docker](https://hub.docker.com/r/aiogram/telegram-bot-api))
+requires: a local Telegram Bot ([docker](https://hub.docker.com/r/aiogram/telegram-bot-api))
 
 telegram_files_upload.py - Simple uploader with basic auto-splitting on temporary folder (with its restore pair).
 When uploading files, the file name will be used as media caption, with its subfolder name used as hashtag.
