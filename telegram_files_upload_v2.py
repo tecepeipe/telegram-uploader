@@ -17,7 +17,7 @@ from telegram.ext import Application
 BOT_TOKEN = "YOUR_BOT_TOKEN_FROM_@BotFather"
 CHAT_ID = "YOUR_CHANNEL_ID_FROM_@JsonDumpBot-100xxxxxx"
 MAX_SIZE = 1.85 * 1024 * 1024 * 1024  # 1.8GB safety threshold
-CHUNK_SIZE = 4 * 1024 * 1024  # 1MB read chunks
+CHUNK_SIZE = 4 * 1024 * 1024  # 4MB read chunks
 MAX_PARALLEL = 2  # async parallel uploads
 
 request = HTTPXRequest(
