@@ -9,7 +9,5 @@ When uploading files, the file name will be used as media caption, with its subf
 telegram_files_upload_v2.py - Uploader with unlimited auto‑splitting for large files with parallel uploads and progress bars.
 also local bot support, time outs for large files handling and automatic cleanup of temporary split segments.
 
-telegram_folders_upload.py - Uploader for sub-folders, 7zipping them and uploading the unlimited parts.
-
 Get API ID/Hash from [Telegram API](https://my.telegram.org/) and Bot Token interacting with @BotFather 
 Channel ID can be obtained forwarding message to @JsonDumpBot
