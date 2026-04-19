@@ -262,7 +262,7 @@ async def download_worker(queue, client):
 # MERGE MANAGER (runs in background)
 # -----------------------------
 
-async def merge_manager(folder: Path):
+async def merge_manager():
     """
     Periodically checks if all parts for any archive are ready.
     Merges only when:
@@ -329,7 +329,7 @@ async def start_restore(client, items, workers=5):
     queue = asyncio.Queue()
 
     # Start merge manager (it will use folder_for_base, not this arg)
-    merge_task = asyncio.create_task(merge_manager(DOWNLOAD_ROOT))
+    merge_task = asyncio.create_task(merge_manager())
 
     # Start workers
     worker_tasks = [
