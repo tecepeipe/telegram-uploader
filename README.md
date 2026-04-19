@@ -1,5 +1,5 @@
 # telegram-uploader
-Use Telegram messages as backup medium. Each message (file) limit is 2GB. No limit of total of messages (be mindful about [ToS](https://telegram.org/tos))
+Use Telegram messages as backup medium. Each message (file/document) limit is 2GB. No limit of total of messages (be mindful about [ToS](https://telegram.org/tos))
 
 requires: a local Telegram Bot ([docker](https://hub.docker.com/r/aiogram/telegram-bot-api))
 
@@ -9,5 +9,4 @@ When uploading files, the file name will be used as media caption, with its subf
 telegram_files_upload_v2.py - Uploader with unlimited auto‑splitting for large files with parallel uploads and progress bars.
 also local bot support, time outs for large files handling and automatic cleanup of temporary split segments.
 
-Get API ID/Hash from [Telegram API](https://my.telegram.org/) and Bot Token interacting with @BotFather 
-Channel ID can be obtained forwarding message to @JsonDumpBot
+Get API ID/Hash from [Telegram API](https://my.telegram.org/), Bot Token interacting with @BotFather and Channel ID can be obtained forwarding message to @JsonDumpBot
