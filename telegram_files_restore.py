@@ -150,45 +150,39 @@ def merge_parts(folder: Path, base_name: str):
     # Find all parts for this specific base
     parts = []
 
-    # Support .001, .002, .003...
-    parts.extend([
-        p for p in folder.iterdir()
-        if p.is_file() and p.name == f"{base_name}.{int(re.search(r'(?:\.(\d{3})$)', p.name).group(1)):03d}"
-        if re.search(r"\.(\d{3})$", p.name)
-    ])
+    # Collect .001, .002, .003...
+    for p in folder.iterdir():
+        if p.is_file():
+            m = re.search(rf"^{re.escape(base_name)}\.(\d{{3}})$", p.name)
+            if m:
+                parts.append((p, int(m.group(1))))
 
-    # Support .part1, .part2, .part3...
-    parts.extend([
-        p for p in folder.iterdir()
-        if p.is_file() and p.name.startswith(base_name) and re.search(r"\.part\d+$", p.name)
-    ])
+    # Collect .part1, .part2, .part3...
+    for p in folder.iterdir():
+        if p.is_file():
+            m = re.search(rf"^{re.escape(base_name)}\.part(\d+)$", p.name)
+            if m:
+                parts.append((p, int(m.group(1))))
 
     if not parts:
         print(f"No parts found for {base_name}")
         return None
 
-    # Sort numerically
-    def part_number(p):
-        m = re.search(r"\.(\d{3})$", p.name)
-        if m:
-            return int(m.group(1))
-        m = re.search(r"\.part(\d+)$", p.name)
-        return int(m.group(1))
-
-    parts_sorted = sorted(parts, key=part_number)
+    # Sort by part number
+    parts_sorted = sorted(parts, key=lambda x: x[1])
 
     output_file = folder / base_name
     print(f"\n🔧 Restoring: {output_file.name}")
 
     with open(output_file, "wb") as outfile:
-        for part in parts_sorted:
-            print(f"   ➕ Adding {part.name}")
-            with open(part, "rb") as infile:
+        for part_file, part_num in parts_sorted:
+            print(f"   ➕ Adding {part_file.name}")
+            with open(part_file, "rb") as infile:
                 outfile.write(infile.read())
 
-    # Delete parts after successful merge
-    for part in parts_sorted:
-        part.unlink()
+    # Delete parts after merge
+    for part_file, _ in parts_sorted:
+        part_file.unlink()
 
     print(f"✅ Restored and cleaned: {output_file.name}")
     return output_file
