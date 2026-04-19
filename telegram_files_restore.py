@@ -3,6 +3,7 @@
 
 import asyncio
 import re
+from collections import defaultdict
 from pathlib import Path
 from tqdm import tqdm
 from telethon import TelegramClient
@@ -11,12 +12,49 @@ from telethon.tl.types import MessageMediaDocument, DocumentAttributeFilename
 # ============================
 # CONFIG
 # ============================
-API_ID = 1234
-API_HASH = "hashhash"
-CHANNEL = -100123456789  # channel ID or @username
-DOWNLOAD_ROOT = Path("downloads")
+API_ID = 123456
+API_HASH = "hash0hash"
+CHANNEL = -100123456789 # channel ID or @username
+DOWNLOAD_ROOT = Path("Downloads")
 MAX_WORKERS = 3  # parallel downloads
 # ============================
+
+# -----------------------------
+# GLOBAL STATE (thread‑safe via asyncio)
+# -----------------------------
+
+expected_parts = defaultdict(int)        # base → total parts expected
+downloaded_parts = defaultdict(set)      # base → {1,2,3,...}
+active_downloads = defaultdict(int)      # base → number of workers still downloading
+merge_locks = defaultdict(asyncio.Lock)  # base → lock to prevent double merges
+
+# -----------------------------
+# HELPERS
+# -----------------------------
+
+def parse_part(filename: str):
+    """
+    Extract base name + part number.
+    Example: 'backup.7z.003' → ('backup.7z', 3)
+    """
+    p = Path(filename)
+    if p.suffix[1:].isdigit():
+        part = int(p.suffix[1:])
+        base = p.with_suffix("").name
+        return base, part
+    return filename, None
+
+
+def all_parts_present(folder: Path, base: str):
+    """
+    Check if all expected parts exist on disk.
+    """
+    total = expected_parts[base]
+    for i in range(1, total + 1):
+        part_file = folder / f"{base}.{i:03d}"
+        if not part_file.exists():
+            return False
+    return True
 
 
 # -----------------------------
@@ -93,27 +131,38 @@ def find_part_groups(folder: Path):
     return groups
 
 
-def merge_parts(folder: Path):
-    groups = find_part_groups(folder)
-    for base_name, parts in groups.items():
-        parts_sorted = sorted(
-            parts,
-            key=lambda p: int(re.search(r"part(\d+)$", p.name).group(1))
-        )
+def merge_parts(folder: Path, base_name: str):
+    # Find all parts for this specific base
+    parts = [
+        p for p in folder.iterdir()
+        if p.is_file() and p.name.startswith(base_name) and re.search(r"\.part\d+$", p.name)
+    ]
 
-        output_file = folder / base_name
-        print(f"\n🔧 Restoring: {output_file.name}")
+    if not parts:
+        print(f"No parts found for {base_name}")
+        return None
 
-        with open(output_file, "wb") as outfile:
-            for part in parts_sorted:
-                print(f"   ➕ Adding {part.name}")
-                with open(part, "rb") as infile:
-                    outfile.write(infile.read())
+    # Sort numerically: part1, part2, part3...
+    parts_sorted = sorted(
+        parts,
+        key=lambda p: int(re.search(r"part(\d+)$", p.name).group(1))
+    )
 
+    output_file = folder / base_name
+    print(f"\n🔧 Restoring: {output_file.name}")
+
+    with open(output_file, "wb") as outfile:
         for part in parts_sorted:
-            part.unlink()
+            print(f"   ➕ Adding {part.name}")
+            with open(part, "rb") as infile:
+                outfile.write(infile.read())
 
-        print(f"✅ Restored and cleaned: {output_file.name}")
+    # Delete parts after successful merge
+    for part in parts_sorted:
+        part.unlink()
+
+    print(f"✅ Restored and cleaned: {output_file.name}")
+    return output_file
 
 
 # -----------------------------
@@ -143,7 +192,7 @@ async def download_with_progress(client, msg, output_path):
 
 
 # -----------------------------
-# WORKER
+# DOWNLOAD WORKER
 # -----------------------------
 
 async def download_worker(queue, client):
@@ -160,20 +209,117 @@ async def download_worker(queue, client):
             safe_filename = "".join(c for c in filename if c not in "\\/:*?\"<>|")
             output_path = folder / safe_filename
 
+            base, part = parse_part(safe_filename)
+
+            if part is not None:
+                # Register expected parts
+                expected_parts[base] = max(expected_parts.get(base, 0), part)
+
+            # Track active download
+            active_downloads[base] += 1
+
             if output_path.exists():
                 print(f"⏭️ Skipping existing file: {output_path}")
-                queue.task_done()
-                continue
+            else:
+                await download_with_progress(client, msg, output_path)
 
-            await download_with_progress(client, msg, output_path)
-
-            merge_parts(folder)
+            # Mark part as downloaded
+            if part:
+                downloaded_parts[base].add(part)
 
         except Exception as e:
             print(f"❌ Worker error: {e}")
 
         finally:
+            active_downloads[base] -= 1
             queue.task_done()
+
+
+# -----------------------------
+# MERGE MANAGER (runs in background)
+# -----------------------------
+
+async def merge_manager(folder: Path):
+    """
+    Periodically checks if all parts for any archive are ready.
+    Merges only when:
+      - all expected parts exist
+      - no worker is still downloading
+    """
+    while True:
+        for base in list(expected_parts.keys()):
+            # Skip if still downloading
+            if active_downloads[base] > 0:
+                continue
+
+            # Skip if not all parts downloaded
+            if len(downloaded_parts[base]) != expected_parts[base]:
+                continue
+
+            # Skip if files not all present on disk
+            if not all_parts_present(folder, base):
+                continue
+
+            # Merge safely
+            async with merge_locks[base]:
+                print(f"🔄 Merging {base}…")
+                try:
+                    merged_file = merge_parts(folder, base)
+                    print(f"✅ Merge complete: {merged_file}")
+
+                    # -----------------------------
+                    # DELETE PART FILES AFTER SUCCESSFUL MERGE
+                    # -----------------------------
+                    total = expected_parts[base]
+                    for i in range(1, total + 1):
+                        part_file = folder / f"{base}.{i:03d}"
+                        if part_file.exists():
+                            part_file.unlink()
+                            print(f"🗑️ Deleted part: {part_file}")
+
+
+                    # Cleanup registry
+                    del expected_parts[base]
+                    del downloaded_parts[base]
+                    del active_downloads[base]
+                    del merge_locks[base]
+
+                except Exception as e:
+                    print(f"❌ Merge error for {base}: {e}")
+
+        await asyncio.sleep(1)  # low CPU overhead
+
+
+# -----------------------------
+# START RESTORE PIPELINE
+# -----------------------------
+
+async def start_restore(client, messages, folder: Path, workers=5):
+    queue = asyncio.Queue()
+
+    # Start merge manager
+    asyncio.create_task(merge_manager(folder))
+
+    # Start workers
+    worker_tasks = [
+        asyncio.create_task(download_worker(queue, client))
+        for _ in range(workers)
+    ]
+
+    # Enqueue messages
+    for msg in messages:
+        await queue.put((msg, folder))
+
+    # Signal workers to exit
+    for _ in range(workers):
+        await queue.put(None)
+
+    # Wait for all workers
+    await queue.join()
+
+    # Wait for workers to finish
+    for t in worker_tasks:
+        await t
 
 
 # -----------------------------
@@ -189,6 +335,11 @@ async def main():
     print("📥 Fetching full channel history...")
 
     queue = asyncio.Queue()
+
+    # 🔥 Start merge manager 
+    asyncio.create_task(merge_manager(DOWNLOAD_ROOT))
+
+    # Start workers
 
     workers = [
         asyncio.create_task(download_worker(queue, client))
@@ -213,8 +364,12 @@ async def main():
 
     print(f"📦 Total files queued: {count}")
 
+    # Signal workers to exit
+
     for _ in workers:
         await queue.put(None)
+
+    # Wait for all workers to finish
 
     await queue.join()
 
