@@ -148,20 +148,34 @@ def find_part_groups(folder: Path):
 
 def merge_parts(folder: Path, base_name: str):
     # Find all parts for this specific base
-    parts = [
+    parts = []
+
+    # Support .001, .002, .003...
+    parts.extend([
+        p for p in folder.iterdir()
+        if p.is_file() and p.name == f"{base_name}.{int(re.search(r'(?:\.(\d{3})$)', p.name).group(1)):03d}"
+        if re.search(r"\.(\d{3})$", p.name)
+    ])
+
+    # Support .part1, .part2, .part3...
+    parts.extend([
         p for p in folder.iterdir()
         if p.is_file() and p.name.startswith(base_name) and re.search(r"\.part\d+$", p.name)
-    ]
+    ])
 
     if not parts:
         print(f"No parts found for {base_name}")
         return None
 
-    # Sort numerically: part1, part2, part3...
-    parts_sorted = sorted(
-        parts,
-        key=lambda p: int(re.search(r"part(\d+)$", p.name).group(1))
-    )
+    # Sort numerically
+    def part_number(p):
+        m = re.search(r"\.(\d{3})$", p.name)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"\.part(\d+)$", p.name)
+        return int(m.group(1))
+
+    parts_sorted = sorted(parts, key=part_number)
 
     output_file = folder / base_name
     print(f"\n🔧 Restoring: {output_file.name}")
@@ -178,6 +192,7 @@ def merge_parts(folder: Path, base_name: str):
 
     print(f"✅ Restored and cleaned: {output_file.name}")
     return output_file
+
 
 
 # -----------------------------
