@@ -1,3 +1,4 @@
 tqdm
 telegram
 telethon
+python-telegram-bot
