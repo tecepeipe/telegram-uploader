@@ -1,5 +1,5 @@
 # Uploads all files in subfolders to Telegram with captions, auto‑splitting large files into parts.
-# Supports local bot, parallel uploads, progress bars, time outs and automatic cleanup of temporary split segments.
+# Supports local bot, parallel uploads, skip already uploaded, progress bars, time outs and automatic cleanup of temporary split segments.
 
 import os
 import math
@@ -30,7 +30,7 @@ request = HTTPXRequest(
 # Create the Bot with a custom base_url
 bot = Bot(
     token=BOT_TOKEN,
-    base_url="http://127.0.0.1:8081/bot",   # Local Bot API server
+    base_url="http://192.168.1.130:8081/bot",   # Local Bot API server
     request=request
 )
 
@@ -39,6 +39,22 @@ app = Application.builder().bot(bot).build()
 
 # remote Bot
 #bot = Bot(token=BOT_TOKEN)
+
+
+# -----------------------------
+# FETCH OLD UPLOADS
+# -----------------------------
+
+async def fetch_existing_captions():
+    updates = await bot.get_updates(offset=0, limit=10000)
+    captions = set()
+
+    for u in updates:
+        msg = u.message
+        if msg and msg.caption:
+            captions.add(msg.caption.strip())
+
+    return captions
 
 
 # -----------------------------
@@ -104,7 +120,7 @@ async def upload_file_with_progress(file_path, caption):
 # -----------------------------
 # PROCESS A SINGLE FILE
 # -----------------------------
-async def process_single_file(full_path, folder_name):
+async def process_single_file(full_path, folder_name, existing_captions):
     caption_base = f"<b>{os.path.basename(full_path)}</b>\n#{folder_name.replace(' ', '_')}"
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -115,6 +131,11 @@ async def process_single_file(full_path, folder_name):
             if len(parts) > 1:
                 caption += f"\nPart {idx}/{len(parts)}"
 
+            # Skip only if THIS specific part exists
+            if caption in existing_captions:
+                print(f"⏭️ Skipping existing part: {caption}")
+                continue
+
             await upload_file_with_progress(part, caption)
 
 
@@ -122,6 +143,10 @@ async def process_single_file(full_path, folder_name):
 # WALK FOLDERS + PARALLEL UPLOAD
 # -----------------------------
 async def process_folder(root_folder):
+    print("Fetching existing messages...")
+    existing_captions = await fetch_existing_captions()
+    print(f"Loaded {len(existing_captions)} existing captions")
+
     tasks = []
 
     for folder, _, files in os.walk(root_folder):
@@ -132,8 +157,11 @@ async def process_folder(root_folder):
 
         for file in files:
             full_path = os.path.join(folder, file)
+
             tasks.append(
-                asyncio.create_task(process_single_file(full_path, folder_name))
+                asyncio.create_task(
+                    process_single_file(full_path, folder_name, existing_captions)
+                )
             )
 
             # Limit concurrency
@@ -150,5 +178,5 @@ async def process_folder(root_folder):
 # MAIN ENTRY
 # -----------------------------
 if __name__ == "__main__":
-    ROOT = r"\Temp\Filmez"
+    ROOT = r"D:\Filmez"
     asyncio.run(process_folder(ROOT))
