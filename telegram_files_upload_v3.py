@@ -10,6 +10,7 @@ from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.request import HTTPXRequest
 from telegram.ext import Application
+from telethon import TelegramClient
 
 # -----------------------------
 # CONFIGURATION
@@ -19,6 +20,10 @@ CHAT_ID = "YOUR_CHANNEL_ID_FROM_@JsonDumpBot-100xxxxxx"
 MAX_SIZE = 1850 * 1024 * 1024  # 1.8GB safety threshold
 CHUNK_SIZE = 4 * 1024 * 1024  # 4MB read chunks
 MAX_PARALLEL = 2  # async parallel uploads
+API_ID = 123456
+API_HASH = "0hash0hash"
+
+client = TelegramClient("session", API_ID, API_HASH)
 
 request = HTTPXRequest(
     connect_timeout=30,     # time to establish connection
@@ -44,15 +49,19 @@ app = Application.builder().bot(bot).build()
 # -----------------------------
 # FETCH OLD UPLOADS
 # -----------------------------
-
 async def fetch_existing_captions():
-    updates = await bot.get_updates(offset=0, limit=10000)
     captions = set()
 
-    for u in updates:
-        msg = u.message
-        if msg and msg.caption:
-            captions.add(msg.caption.strip())
+    entity = await client.get_entity(CHAT_ID)
+
+    async for msg in client.iter_messages(entity):
+        # Captions for media messages
+        if msg.message:
+            captions.add(msg.message.strip())
+
+        # Captions for text messages
+        elif msg.text:
+            captions.add(msg.text.strip())
 
     return captions
 
@@ -179,4 +188,8 @@ async def process_folder(root_folder):
 # -----------------------------
 if __name__ == "__main__":
     ROOT = r"D:\Filmez"
-    asyncio.run(process_folder(ROOT))
+    async def main():
+        await client.start()  # login once
+        await process_folder(ROOT)
+
+    asyncio.run(main())
