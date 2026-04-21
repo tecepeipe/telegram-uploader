@@ -130,7 +130,7 @@ async def upload_file_with_progress(file_path, caption):
 # PROCESS A SINGLE FILE
 # -----------------------------
 async def process_single_file(full_path, folder_name, existing_captions):
-    caption_base = f"<b>{os.path.basename(full_path)}</b>\n#{folder_name.replace(' ', '_')}"
+    caption_base = f"{os.path.basename(full_path)}\n#{folder_name.replace(' ', '_')}"
 
     with tempfile.TemporaryDirectory() as temp_dir:
         parts = split_file(full_path, temp_dir)
