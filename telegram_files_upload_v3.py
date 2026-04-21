@@ -120,6 +120,11 @@ def split_file(filepath, temp_dir):
                     remaining -= len(chunk)
             part_paths.append(part_path)
 
+            # ❗ Delete empty files
+            if os.path.getsize(part_path) == 0:
+                os.remove(part_path)
+                continue
+
     return part_paths
 
 
@@ -136,6 +141,9 @@ def shorten_filename(name, start=35, end=20):
 # -----------------------------
 async def upload_file_with_progress(file_path, caption):
     file_size = os.path.getsize(file_path)
+    if file_size == 0:
+        print("⚠️ Skipping empty file:", file_path)
+        return
     filename = os.path.basename(file_path)
     short = shorten_filename(filename)
 
