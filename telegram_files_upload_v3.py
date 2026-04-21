@@ -129,12 +129,15 @@ def split_file(filepath, temp_dir):
 
 
 # -----------------------------
-# REDUCES FILE NAME FOR DISPLAYING
+# NORMALIZIE FILE NAME FOR DISPLAYING
 # -----------------------------
-def shorten_filename(name, start=35, end=20):
+def normalize_filename(name, start=35, end=20):
+    if len(name) > start + end + 3:
+        return name[:start] + "..." + name[-end:]
     if len(name) <= start + end + 3:
-        return name
-    return name[:start] + "..." + name[-end:]
+        return name.ljust(58)
+    return name
+    
 
 # -----------------------------
 # ASYNC UPLOAD WITH PROGRESS BAR
@@ -145,7 +148,7 @@ async def upload_file_with_progress(file_path, caption):
         print("⚠️ Skipping empty file:", file_path)
         return
     filename = os.path.basename(file_path)
-    short = shorten_filename(filename)
+    short = normalize_filename(filename)
 
     with open(file_path, "rb") as f, tqdm(
         total=file_size,
