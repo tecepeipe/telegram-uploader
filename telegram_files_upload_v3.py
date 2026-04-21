@@ -1,15 +1,18 @@
 # Uploads all files in subfolders to Telegram with captions, auto‑splitting large files into parts.
-# Supports local bot, parallel uploads, skip existng, progress bars, time outs and automatic cleanup of temporary split segments.
+# Supports local bot, parallel uploads, skip existng, retry uploads, progress bars, time outs and automatic cleanup of temporary split segments.
 
 import os
 import math
 import tempfile
 import asyncio
+import asyncio
+import random
 from tqdm import tqdm
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.request import HTTPXRequest
 from telegram.ext import Application
+from telegram.error import NetworkError, TimedOut
 from telethon import TelegramClient
 
 # -----------------------------
@@ -45,6 +48,31 @@ app = Application.builder().bot(bot).build()
 # remote Bot
 #bot = Bot(token=BOT_TOKEN)
 
+# -----------------------------
+# RETRY FAILED UPLOADS
+# -----------------------------
+async def retry_async(
+    func,
+    *args,
+    retries=5,
+    base_delay=2,
+    max_delay=30,
+    exceptions=(NetworkError, TimedOut, OSError),
+    **kwargs
+):
+    for attempt in range(1, retries + 1):
+        try:
+            return await func(*args, **kwargs)
+
+        except exceptions as e:
+            if attempt == retries:
+                raise
+
+            delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+            delay = delay * (0.7 + random.random() * 0.6)  # jitter
+
+            print(f"[Retry {attempt}/{retries}] Error: {e}. Retrying in {delay:.1f}s")
+            await asyncio.sleep(delay)
 
 # -----------------------------
 # FETCH OLD UPLOADS
@@ -117,13 +145,16 @@ async def upload_file_with_progress(file_path, caption):
                     progress.update(len(chunk))
                 return chunk
 
-        await bot.send_document(
-            chat_id=CHAT_ID,
-            document=StreamWrapper(),
-            filename=os.path.basename(file_path),
-            caption=caption,
-            parse_mode=ParseMode.HTML,
-        )
+        async def _send():
+            return await bot.send_document(
+                chat_id=CHAT_ID,
+                document=StreamWrapper(),
+                filename=os.path.basename(file_path),
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+            )
+
+        await retry_async(_send)
 
 
 # -----------------------------
@@ -142,7 +173,7 @@ async def process_single_file(full_path, folder_name, existing_captions):
 
             # Skip only if THIS specific part exists
             if caption in existing_captions:
-                print(f"⏭️ Skipping existing part: {caption}")
+                #print(f"⏭️ Skipping existing part: {caption}")
                 continue
 
             await upload_file_with_progress(part, caption)
