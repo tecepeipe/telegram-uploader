@@ -195,7 +195,7 @@ async def process_single_file(full_path, folder_name, existing_captions):
 async def process_folder(root_folder):
     print("Fetching existing messages...")
     existing_captions = await fetch_existing_captions()
-    print(f"Loaded {len(existing_captions)} existing captions")
+    print(f"Loaded {len(existing_captions)} existing files")
 
     tasks = []
 
