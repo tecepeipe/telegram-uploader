@@ -124,16 +124,26 @@ def split_file(filepath, temp_dir):
 
 
 # -----------------------------
+# REDUCES FILE NAME FOR DISPLAYING
+# -----------------------------
+def shorten_filename(name, start=35, end=20):
+    if len(name) <= start + end + 3:
+        return name
+    return name[:start] + "..." + name[-end:]
+
+# -----------------------------
 # ASYNC UPLOAD WITH PROGRESS BAR
 # -----------------------------
 async def upload_file_with_progress(file_path, caption):
     file_size = os.path.getsize(file_path)
+    filename = os.path.basename(file_path)
+    short = shorten_filename(filename)
 
     with open(file_path, "rb") as f, tqdm(
         total=file_size,
         unit="B",
         unit_scale=True,
-        desc=f"Uploading {os.path.basename(file_path)}",
+        desc=f"Uploading {short}",
     ) as progress:
 
         class StreamWrapper:
