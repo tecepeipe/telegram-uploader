@@ -1,5 +1,5 @@
 # Uploads all files in subfolders to Telegram with captions, auto‑splitting large files into parts.
-# Supports local bot, parallel uploads, skip already uploaded, progress bars, time outs and automatic cleanup of temporary split segments.
+# Supports local bot, parallel uploads, skip existng, progress bars, time outs and automatic cleanup of temporary split segments.
 
 import os
 import math
