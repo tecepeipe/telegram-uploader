@@ -149,33 +149,32 @@ async def upload_file_with_progress(file_path, caption):
     filename = os.path.basename(file_path)
     short = normalize_filename(filename)
 
-    with open(file_path, "rb") as f, tqdm(
-        total=file_size,
-        unit="B",
-        unit_scale=True,
-        desc=f"Uploading {short}",
-    ) as progress:
+    async def _send():
+        with open(file_path, "rb") as f, tqdm(
+            total=file_size,
+            unit="B",
+            unit_scale=True,
+            desc=f"Uploading {short}",
+        ) as progress:
 
-        class StreamWrapper:
-            name = os.path.basename(file_path)
+            class StreamWrapper:
+                name = filename
 
-            def read(self, n=-1):
-                chunk = f.read(n)
-                if chunk:
-                    progress.update(len(chunk))
-                return chunk
+                def read(self, n=-1):
+                    chunk = f.read(n)
+                    if chunk:
+                        progress.update(len(chunk))
+                    return chunk
 
-        async def _send():
             return await bot.send_document(
                 chat_id=CHAT_ID,
                 document=StreamWrapper(),
-                filename=os.path.basename(file_path),
+                filename=filename,
                 caption=caption,
                 parse_mode=ParseMode.HTML,
             )
 
-        await retry_async(_send)
-
+    await retry_async(_send)
 
 # -----------------------------
 # PROCESS A SINGLE FILE
