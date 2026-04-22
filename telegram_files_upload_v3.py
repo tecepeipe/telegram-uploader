@@ -145,7 +145,6 @@ def normalize_filename(name, start=35, end=20):
 async def upload_file_with_progress(file_path, caption):
     file_size = os.path.getsize(file_path)
     if file_size == 0:
-        print("⚠️ Skipping empty file:", file_path)
         return
     filename = os.path.basename(file_path)
     short = normalize_filename(filename)
