@@ -90,7 +90,7 @@ class TelegramDispatcher:
                 await coro()
             except RetryAfter as e:
                 wait = e.retry_after
-                print(f"[Dispatcher] Flood control: waiting {wait}s for chat {chat_id}")
+                #print(f"[Dispatcher] Flood control: waiting {wait}s")
                 self.chat_cooldowns[chat_id] = time.time() + wait
                 await asyncio.sleep(wait)
                 await self.queue.put((priority, chat_id, next(self.counter), coro))
