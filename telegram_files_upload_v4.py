@@ -1,18 +1,19 @@
 # Uploads all files in subfolders to Telegram with captions, auto‑splitting large files into parts.
-# Supports local bot, parallel uploads, skip existng, retry uploads, progress bars, time outs and automatic cleanup of temporary split segments.
+# Supports local bot, parallel uploads, skip existing, retry uploads, progress bars, time outs, flood control and automatic cleanup of temporary split segments.
 
 import os
 import math
 import tempfile
 import asyncio
-import asyncio
 import random
+import time
+import itertools
 from tqdm import tqdm
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.request import HTTPXRequest
 from telegram.ext import Application
-from telegram.error import NetworkError, TimedOut
+from telegram.error import RetryAfter, NetworkError, TimedOut
 from telethon import TelegramClient
 
 # -----------------------------
@@ -45,8 +46,60 @@ bot = Bot(
 # Build the Application using your custom bot
 app = Application.builder().bot(bot).build()
 
-# remote Bot
+# Remote Bot
 #bot = Bot(token=BOT_TOKEN)
+
+# -----------------------------
+# TELEGRAM DISPATCHER
+# -----------------------------
+class TelegramDispatcher:
+    def __init__(self, bot, rate_limit=1.0):
+        self.bot = bot
+        self.queue = asyncio.PriorityQueue()
+        self.rate_limit = rate_limit
+        self.last_request_time = 0
+        self.chat_cooldowns = {}  # chat_id -> timestamp
+        self.counter = itertools.count()  
+
+    async def throttle(self):
+        now = time.time()
+        delta = now - self.last_request_time
+        if delta < self.rate_limit:
+            await asyncio.sleep(self.rate_limit - delta)
+        self.last_request_time = time.time()
+
+    async def submit(self, priority, chat_id, coro):
+        """
+        coro: async callable with no arguments (e.g. lambda: _send())
+        """
+        count = next(self.counter)  
+        await self.queue.put((priority, chat_id, count, coro))
+
+    async def run(self):
+        while True:
+            priority, chat_id, count, coro = await self.queue.get()
+
+            # Per-chat cooldown
+            cooldown_until = self.chat_cooldowns.get(chat_id, 0)
+            now = time.time()
+            if now < cooldown_until:
+                await asyncio.sleep(cooldown_until - now)
+
+            try:
+                await self.throttle()
+                await coro()
+            except RetryAfter as e:
+                wait = e.retry_after
+                print(f"[Dispatcher] Flood control: waiting {wait}s for chat {chat_id}")
+                self.chat_cooldowns[chat_id] = time.time() + wait
+                await asyncio.sleep(wait)
+                await self.queue.put((priority, chat_id, next(self.counter), coro))
+            except (TimedOut, NetworkError) as e:
+                print(f"[Dispatcher] Network error: {e}. Retrying in 3s")
+                await asyncio.sleep(3)
+                await self.queue.put((priority, chat_id, next(self.counter), coro))
+            finally:
+                self.queue.task_done()
 
 # -----------------------------
 # RETRY FAILED UPLOADS
@@ -174,7 +227,15 @@ async def upload_file_with_progress(file_path, caption):
                 parse_mode=ParseMode.HTML,
             )
 
-    await retry_async(_send)
+    async def wrapped():
+        await retry_async(_send)
+
+    # All Telegram calls go through the dispatcher
+    await dispatcher.submit(
+        priority=10,
+        chat_id=CHAT_ID,
+        coro=wrapped,
+    )
 
 # -----------------------------
 # PROCESS A SINGLE FILE
@@ -254,7 +315,19 @@ async def process_folder(root_folder):
 if __name__ == "__main__":
     ROOT = r"D:\Filmez"
     async def main():
+        global dispatcher
         await client.start()  # login once
+
+        # Create dispatcher and start its loop
+        dispatcher = TelegramDispatcher(bot, rate_limit=1.0)  # tune if needed
+        asyncio.create_task(dispatcher.run())
+
+        # Run folder processing
         await process_folder(ROOT)
+
+        # Wait until all queued uploads are done
+        await dispatcher.queue.join()
+        print("All uploads completed.")
+
 
     asyncio.run(main())
