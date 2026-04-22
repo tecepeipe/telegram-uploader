@@ -182,19 +182,34 @@ async def upload_file_with_progress(file_path, caption):
 # PROCESS A SINGLE FILE
 # -----------------------------
 async def process_single_file(full_path, folder_name, existing_captions):
-    caption_base = f"{os.path.basename(full_path)}\n#{folder_name.replace(' ', '_')}"
+    filename = os.path.basename(full_path)
+    caption_base = f"{filename}\n#{folder_name.replace(' ', '_')}"
 
+    # First: determine how many parts WOULD be created
+    file_size = os.path.getsize(full_path)
+    part_count = math.ceil(file_size / MAX_SIZE)
+
+    # Build all expected captions WITHOUT splitting
+    expected_captions = []
+    for idx in range(1, part_count + 1):
+        cap = caption_base
+        if part_count > 1:
+            cap += f"\nPart {idx}/{part_count}"
+        expected_captions.append(cap)
+
+    # If ALL parts already exist → skip entire file
+    if all(cap in existing_captions for cap in expected_captions):
+        # print(f"⏭️ Skipping fully uploaded file: {filename}")
+        return
+
+    # Otherwise split only now
     with tempfile.TemporaryDirectory() as temp_dir:
         parts = split_file(full_path, temp_dir)
 
         for idx, part in enumerate(parts, start=1):
-            caption = caption_base
-            if len(parts) > 1:
-                caption += f"\nPart {idx}/{len(parts)}"
+            caption = expected_captions[idx - 1]
 
-            # Skip only if THIS specific part exists
             if caption in existing_captions:
-                #print(f"⏭️ Skipping existing part: {caption}")
                 continue
 
             await upload_file_with_progress(part, caption)
