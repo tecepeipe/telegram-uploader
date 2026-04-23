@@ -1,5 +1,6 @@
 # Uploads all files in subfolders to Telegram with captions, auto‑splitting large files into parts.
-# Supports local bot, parallel uploads, skip existing, retry uploads, progress bars, time outs, flood control and automatic cleanup of temporary split segments.
+# Supports local bot, parallel uploads, skip existing, retry uploads, time outs, progress bars, 
+# flood control and automatic cleanup of temporary split segments.
 
 import os
 import math
@@ -29,6 +30,7 @@ API_ID = 123456
 API_HASH = "0hash0hash"
 
 client = TelegramClient("session", API_ID, API_HASH)
+upload_semaphore = asyncio.Semaphore(MAX_PARALLEL)
 
 request = HTTPXRequest(
     connect_timeout=30,     # time to establish connection
@@ -56,7 +58,7 @@ processed_files = set()
 # TELEGRAM DISPATCHER
 # -----------------------------
 class TelegramDispatcher:
-    def __init__(self, bot, rate_limit=1.0):
+    def __init__(self, bot, rate_limit=1.5):
         self.bot = bot
         self.queue = asyncio.PriorityQueue()
         self.rate_limit = rate_limit
@@ -72,15 +74,16 @@ class TelegramDispatcher:
         self.last_request_time = time.time()
 
     async def submit(self, priority, chat_id, coro):
-        """
-        coro: async callable with no arguments (e.g. lambda: _send())
-        """
-        count = next(self.counter)  
-        await self.queue.put((priority, chat_id, count, coro))
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        count = next(self.counter)
+        await self.queue.put((priority, chat_id, count, coro, future))
+        return future
 
     async def run(self):
         while True:
-            priority, chat_id, count, coro = await self.queue.get()
+            priority, chat_id, count, coro, future = await self.queue.get()
 
             # Per-chat cooldown
             cooldown_until = self.chat_cooldowns.get(chat_id, 0)
@@ -90,19 +93,31 @@ class TelegramDispatcher:
 
             try:
                 await self.throttle()
-                await coro()
+                result = await coro()
+                future.set_result(result)
             except RetryAfter as e:
                 wait = e.retry_after
-                #print(f"[Dispatcher] Flood control: waiting {wait}s")
+                print(f"[Dispatcher] Flood control: waiting {wait}s")
                 self.chat_cooldowns[chat_id] = time.time() + wait
                 await asyncio.sleep(wait)
-                await self.queue.put((priority, chat_id, next(self.counter), coro))
+                await self.queue.put((priority, chat_id, next(self.counter), coro, future))
+
             except (TimedOut, NetworkError) as e:
                 print(f"[Dispatcher] Network error: {e}. Retrying in 3s")
                 await asyncio.sleep(3)
-                await self.queue.put((priority, chat_id, next(self.counter), coro))
+                await self.queue.put((priority, chat_id, next(self.counter), coro, future))
+                #print(f"[Dispatcher] Network error (no retry): {repr(e)}")
+                #future.set_exception(e)
+
+            except Exception as e:
+                print(f"[Dispatcher] Unhandled error: {e}")
+                future.set_exception(e)
+                self.queue.task_done()
+                continue
+
             finally:
                 self.queue.task_done()
+
 
 # -----------------------------
 # RETRY FAILED UPLOADS
@@ -199,7 +214,7 @@ def split_file(filepath, temp_dir):
 
     with open(filepath, "rb") as f:
         for i in range(num_parts):
-            #print(f"Splitting {filename}") 
+            print(f"Splitting {filename}") 
             part_path = os.path.join(temp_dir, f"{filename}.part{i+1}")
             with open(part_path, "wb") as p:
                 remaining = MAX_SIZE
@@ -227,7 +242,7 @@ async def upload_file_with_progress(file_path, caption):
         return
     filename = os.path.basename(file_path)
     short = normalize_filename(filename)
-
+    
     async def _send():
         with open(file_path, "rb") as f, tqdm(
             total=file_size,
@@ -253,15 +268,13 @@ async def upload_file_with_progress(file_path, caption):
                 parse_mode=ParseMode.HTML,
             )
 
-    async def wrapped():
-        await retry_async(_send)
-
-    # All Telegram calls go through the dispatcher
-    await dispatcher.submit(
+    future = await dispatcher.submit(
         priority=10,
         chat_id=CHAT_ID,
-        coro=wrapped,
+        coro=_send
     )
+    await future
+
 
 # -----------------------------
 # SPLIT AND UPLOAD
@@ -269,12 +282,14 @@ async def upload_file_with_progress(file_path, caption):
 async def split_and_upload(full_path, expected_captions):
     filename = os.path.basename(full_path)
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        parts = split_file(full_path, temp_dir)
+    async with upload_semaphore:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            parts = split_file(full_path, temp_dir)
 
-        for idx, part in enumerate(parts, start=1):
-            caption = expected_captions[idx - 1]
-            await upload_file_with_progress(part, caption)
+            for idx, part in enumerate(parts, start=1):
+                caption = expected_captions[idx - 1]
+                # Upload each part (dispatcher is used INSIDE this function)
+                await upload_file_with_progress(part, caption)
 
 # -----------------------------
 # PROCESS A SINGLE FILE
@@ -301,14 +316,7 @@ async def process_single_file(full_path, folder_name, existing_captions):
         return
     
     # Otherwise split and upload now
-    async def job():
-        await split_and_upload(full_path, expected_captions)
-
-    await dispatcher.submit(
-        priority=10,
-        chat_id=CHAT_ID,
-        coro=job
-    )
+    await split_and_upload(full_path, expected_captions)
 
 # -----------------------------
 # WALK FOLDERS + PARALLEL UPLOAD
@@ -334,20 +342,12 @@ async def process_folder(root_folder):
                 continue
             processed_files.add(full_path)
 
-            tasks.append(
-                asyncio.create_task(
-                    process_single_file(full_path, folder_name, existing_captions)
-                )
-            )
+            tasks.append(asyncio.create_task(
+                process_single_file(full_path, folder_name, existing_captions)
+            ))
 
-            # Limit concurrency
-            if len(tasks) >= MAX_PARALLEL:
-                await asyncio.gather(*tasks)
-                tasks = []
-
-    # Process remaining tasks
-    if tasks:
-        await asyncio.gather(*tasks)
+    # wait for all file tasks
+    await asyncio.gather(*tasks)
 
 
 # -----------------------------
