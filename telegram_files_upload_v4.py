@@ -43,8 +43,8 @@ request = HTTPXRequest(
 # Create the Bot with a custom base_url
 bot = Bot(
     token=BOT_TOKEN,
-    base_url="http://192.168.1.130:8081/bot",   # Local Bot API server
-    request=request
+    base_url="http://192.168.1.130:8081/bot",   # Local Bot API server aiogram/telegram-bot-api
+    request=request                             # TELEGRAM_API_HASH TELEGRAM_API_ID TELEGRAM_MAX_CONNECTIONS=250 TELEGRAM_MAX_WEBHOOK_CONNECTIONS=200 TELEGRAM_MAX_THREADS=8
 )
 
 # Build the Application using your custom bot
