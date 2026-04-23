@@ -28,6 +28,7 @@ CHUNK_SIZE = 4 * 1024 * 1024  # 4MB read chunks
 MAX_PARALLEL = 2  # async parallel uploads
 API_ID = 123456
 API_HASH = "0hash0hash"
+ROOT = r"C:\_Incoming\Filmez"
 
 client = TelegramClient("session", API_ID, API_HASH)
 upload_semaphore = asyncio.Semaphore(MAX_PARALLEL)
@@ -214,7 +215,7 @@ def split_file(filepath, temp_dir):
 
     with open(filepath, "rb") as f:
         for i in range(num_parts):
-            print(f"Splitting {filename}") 
+            #print(f"Splitting {filename}") 
             part_path = os.path.join(temp_dir, f"{filename}.part{i+1}")
             with open(part_path, "wb") as p:
                 remaining = MAX_SIZE
@@ -354,7 +355,6 @@ async def process_folder(root_folder):
 # MAIN ENTRY
 # -----------------------------
 if __name__ == "__main__":
-    ROOT = r"D:\Filmez"
     async def main():
         global dispatcher
         await client.start()  # login once
