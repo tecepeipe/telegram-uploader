@@ -15,6 +15,7 @@ from telegram.request import HTTPXRequest
 from telegram.ext import Application
 from telegram.error import RetryAfter, NetworkError, TimedOut
 from telethon import TelegramClient
+from telethon.tl.types import DocumentAttributeFilename
 
 # -----------------------------
 # CONFIGURATION
@@ -48,6 +49,8 @@ app = Application.builder().bot(bot).build()
 
 # Remote Bot
 #bot = Bot(token=BOT_TOKEN)
+
+processed_files = set()
 
 # -----------------------------
 # TELEGRAM DISPATCHER
@@ -128,21 +131,55 @@ async def retry_async(
             await asyncio.sleep(delay)
 
 # -----------------------------
+# NORMALIZIE FILE NAME FOR DISPLAYING
+# -----------------------------
+def normalize_filename(name, start=35, end=20):
+    if len(name) > start + end + 3:
+        return name[:start] + "..." + name[-end:]
+    if len(name) <= start + end + 3:
+        return name.ljust(58)
+    return name
+
+# -----------------------------
 # FETCH OLD UPLOADS
 # -----------------------------
 async def fetch_existing_captions():
     captions = set()
+    seen = {}          # normalized_filename → msg
+    duplicates = []    # messages to delete
 
     entity = await client.get_entity(CHAT_ID)
 
     async for msg in client.iter_messages(entity):
-        # Captions for media messages
+
+        # --- Detect duplicates based on Telegram's file_name 
+        if msg.document :
+            tg_filename = None
+
+            for attr in msg.document.attributes:
+                if isinstance(attr, DocumentAttributeFilename):
+                    tg_filename = attr.file_name
+                    break
+
+            if tg_filename:
+                if tg_filename in seen:
+                    duplicates.append(msg)
+                else:
+                    seen[tg_filename] = msg
+
+        # --- Collect captions
         if msg.message:
             captions.add(msg.message.strip())
-
-        # Captions for text messages
         elif msg.text:
             captions.add(msg.text.strip())
+
+    # --- Delete duplicates ---
+    for dup in duplicates:
+        try:
+            #print(f"🗑️ Removed duplicate: {dup.id}")
+            await client.delete_messages(CHAT_ID, dup.id)
+        except Exception as e:
+            print(f"⚠️ Failed to delete duplicate: {dup.id}: {e}")
 
     return captions
 
@@ -162,6 +199,7 @@ def split_file(filepath, temp_dir):
 
     with open(filepath, "rb") as f:
         for i in range(num_parts):
+            #print(f"Splitting {filename}") 
             part_path = os.path.join(temp_dir, f"{filename}.part{i+1}")
             with open(part_path, "wb") as p:
                 remaining = MAX_SIZE
@@ -179,18 +217,6 @@ def split_file(filepath, temp_dir):
                 continue
 
     return part_paths
-
-
-# -----------------------------
-# NORMALIZIE FILE NAME FOR DISPLAYING
-# -----------------------------
-def normalize_filename(name, start=35, end=20):
-    if len(name) > start + end + 3:
-        return name[:start] + "..." + name[-end:]
-    if len(name) <= start + end + 3:
-        return name.ljust(58)
-    return name
-    
 
 # -----------------------------
 # ASYNC UPLOAD WITH PROGRESS BAR
@@ -238,6 +264,19 @@ async def upload_file_with_progress(file_path, caption):
     )
 
 # -----------------------------
+# SPLIT AND UPLOAD
+# -----------------------------
+async def split_and_upload(full_path, expected_captions):
+    filename = os.path.basename(full_path)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        parts = split_file(full_path, temp_dir)
+
+        for idx, part in enumerate(parts, start=1):
+            caption = expected_captions[idx - 1]
+            await upload_file_with_progress(part, caption)
+
+# -----------------------------
 # PROCESS A SINGLE FILE
 # -----------------------------
 async def process_single_file(full_path, folder_name, existing_captions):
@@ -260,19 +299,16 @@ async def process_single_file(full_path, folder_name, existing_captions):
     if all(cap in existing_captions for cap in expected_captions):
         # print(f"⏭️ Skipping fully uploaded file: {filename}")
         return
+    
+    # Otherwise split and upload now
+    async def job():
+        await split_and_upload(full_path, expected_captions)
 
-    # Otherwise split only now
-    with tempfile.TemporaryDirectory() as temp_dir:
-        parts = split_file(full_path, temp_dir)
-
-        for idx, part in enumerate(parts, start=1):
-            caption = expected_captions[idx - 1]
-
-            if caption in existing_captions:
-                continue
-
-            await upload_file_with_progress(part, caption)
-
+    await dispatcher.submit(
+        priority=10,
+        chat_id=CHAT_ID,
+        coro=job
+    )
 
 # -----------------------------
 # WALK FOLDERS + PARALLEL UPLOAD
@@ -292,6 +328,11 @@ async def process_folder(root_folder):
 
         for file in files:
             full_path = os.path.join(folder, file)
+
+            # Prevent duplicate processing
+            if full_path in processed_files:
+                continue
+            processed_files.add(full_path)
 
             tasks.append(
                 asyncio.create_task(
@@ -328,6 +369,5 @@ if __name__ == "__main__":
         # Wait until all queued uploads are done
         await dispatcher.queue.join()
         print("All uploads completed.")
-
 
     asyncio.run(main())
