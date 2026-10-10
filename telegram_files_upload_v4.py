@@ -26,6 +26,7 @@ CHAT_ID = "YOUR_CHANNEL_ID_FROM_@JsonDumpBot-100xxxxxx"
 MAX_SIZE = 1850 * 1024 * 1024  # 1.8GB safety threshold
 CHUNK_SIZE = 4 * 1024 * 1024  # 4MB read chunks
 MAX_PARALLEL = 2  # async parallel uploads
+# Replace these placeholders with the API credentials from https://my.telegram.org.
 API_ID = 123456
 API_HASH = "YOUR_API_HASH_HERE"
 ROOT = r"C:\_Incoming\Filmez"
