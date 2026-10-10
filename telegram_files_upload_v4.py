@@ -27,10 +27,9 @@ MAX_SIZE = 1850 * 1024 * 1024  # 1.8GB safety threshold
 CHUNK_SIZE = 4 * 1024 * 1024  # 4MB read chunks
 MAX_PARALLEL = 2  # async parallel uploads
 API_ID = 123456
-API_HASH = "0hash0hash"
+API_HASH = "YOUR_API_HASH_HERE"
 ROOT = r"C:\_Incoming\Filmez"
 
-client = TelegramClient("session", API_ID, API_HASH)
 upload_semaphore = asyncio.Semaphore(MAX_PARALLEL)
 
 request = HTTPXRequest(
@@ -356,7 +355,15 @@ async def process_folder(root_folder):
 # -----------------------------
 if __name__ == "__main__":
     async def main():
-        global dispatcher
+        global client, dispatcher
+
+        if API_ID <= 123456 or API_HASH == "YOUR_API_HASH_HERE":
+            raise RuntimeError(
+                "Replace API_ID and API_HASH in the CONFIG section with your "
+                "Telegram API credentials."
+            )
+
+        client = TelegramClient("session", API_ID, API_HASH)
         await client.start()  # login once
 
         # Create dispatcher and start its loop
